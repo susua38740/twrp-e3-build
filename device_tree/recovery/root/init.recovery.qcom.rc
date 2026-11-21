@@ -1,5 +1,41 @@
-# Meizu E3 - ro.hardware=qcom，此文件由 init.rc import
-# 仅确保 configfs 模式与 UDC 控制器名，真正的 gadget 建立在 init.recovery.usb.rc
+# Meizu E3 (sdm660, kernel 4.19): TWRP USB via configfs gadget (adb + mtp)
 on init
     setprop sys.usb.configfs 1
     setprop sys.usb.controller a800000.dwc3
+
+on fs && property:sys.usb.configfs=1
+    mkdir /dev/usb-ffs/mtp 0770 shell shell
+
+# config 切走时清掉 mtp 链接（init.rc 会 rm f1 并解绑 UDC）
+on property:sys.usb.config=none && property:sys.usb.configfs=1
+    rm /config/usb_gadget/g1/configs/b.1/f2
+
+# TWRP 启用 MTP：先建函数再挂 functionfs（MTP 服务 usleep(800ms) 后才开 ep0）
+on property:sys.usb.config=mtp,adb && property:sys.usb.configfs=1
+    mkdir /config/usb_gadget/g1/functions/ffs.mtp
+    mkdir /dev/usb-ffs/mtp 0770 shell shell
+    mount functionfs mtp /dev/usb-ffs/mtp rmode=0770,fmode=0660,uid=1023,gid=1023
+
+# MTP 就绪（UDC 此时已被 init.rc 在 config=none 时解绑）：挂 f1+f2 并拉起 adbd
+on property:sys.usb.ffs.mtp.ready=1 && property:sys.usb.configfs=1
+    symlink /config/usb_gadget/g1/functions/ffs.adb /config/usb_gadget/g1/configs/b.1/f1
+    symlink /config/usb_gadget/g1/functions/ffs.mtp /config/usb_gadget/g1/configs/b.1/f2
+    write /config/usb_gadget/g1/idProduct 0x4EE2
+    write /config/usb_gadget/g1/configs/b.1/strings/0x409/configuration mtp,adb
+    start adbd
+
+# adb 的 ffs 也就绪后，才真正绑 UDC（两个功能都在）
+on property:sys.usb.ffs.ready=1 && property:sys.usb.config=mtp,adb
+    write /config/usb_gadget/g1/UDC ${sys.usb.controller}
+    setprop sys.usb.state mtp,adb
+
+# 重启到 recovery：先写 BCB，再由普通重启引导进入 recovery
+on property:tw_action_param=recovery
+    write /dev/block/mmcblk0p43 boot-recovery
+
+# 重启到系统 / 关机：破坏 BCB 标记，避免被引导到 recovery
+on property:tw_action_param=system
+    write /dev/block/mmcblk0p43 0
+
+on property:tw_action_param=poweroff
+    write /dev/block/mmcblk0p43 0

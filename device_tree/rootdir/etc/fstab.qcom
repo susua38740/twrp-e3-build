@@ -20,8 +20,6 @@
 /dev/block/bootdevice/by-name/persist                    /mnt/vendor/persist  ext4    nosuid,nodev,barrier=1,noatime                                                                  wait,check
 
 /devices/platform/soc/c084000.sdhci/mmc_host*            auto                 auto    nosuid,nodev                                                                                    wait,voldmanaged=sdcard1:auto,encryptable=userdata
-/devices/platform/soc/*.ssusb/*.dwc3/xhci-hcd.*.auto*    /storage/usbotg      vfat    nosuid,nodev                                                                                    wait,voldmanaged=usbotg:auto
-/devices/virtual/test_uaccess/uaccess                     /mnt/media/usb_otg  vfat    nosuid,nodev                                                                                     wait,voldmanaged=usb_otg:auto
 /dev/block/bootdevice/by-name/userdata                   /storage/self/primary  f2fs    nosuid,nodev,noatime,background_gc=off,fsync_mode=nobarrier                                   wait,voldmanaged=primary:auto,encryptable=userdata
 /dev/block/bootdevice/by-name/userdata                   /storage/self/primary  ext4    nosuid,nodev,noatime,barrier=1,lazytime,errors=panic                                    wait,voldmanaged=primary:auto,encryptable=userdata
 
