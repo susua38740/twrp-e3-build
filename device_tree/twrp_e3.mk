@@ -7,6 +7,6 @@ $(call inherit-product, vendor/twrp/config/common.mk)
 PRODUCT_NAME := twrp_e3
 PRODUCT_DEVICE := e3
 PRODUCT_BRAND := meizu
-PRODUCT_MODEL := E3
+PRODUCT_MODEL := M1851Q
 PRODUCT_MANUFACTURER := meizu
 PRODUCT_RELEASE_NAME := E3
