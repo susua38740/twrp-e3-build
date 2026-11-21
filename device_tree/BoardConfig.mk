@@ -3,6 +3,9 @@
 #
 DEVICE_PATH := device/meizu/e3
 
+# For building with minimal manifest
+ALLOW_MISSING_DEPENDENCIES := true
+
 # Architecture
 TARGET_ARCH := arm64
 TARGET_ARCH_VARIANT := armv8-a
@@ -24,7 +27,7 @@ TARGET_NO_BOOTLOADER := true
 TARGET_USES_64_BIT_BINDER := true
 
 # Kernel (prebuilt Image.gz-dtb, same kernel as the working LOS20 recovery)
-BOARD_KERNEL_CMDLINE := androidboot.configfs=true androidboot.hardware=qcom androidboot.usbcontroller=a800000.dwc3 ehci-hcd.park=3 loop.max_part=7 lpm_levels.sleep_disabled=1 msm_rtb.filter=0x37 printk.devkmsg=on sched_enable_hmp=1 sched_enable_power_aware=1 service_locator.enable=1 usbcore.autosuspend=7 user_debug=31
+BOARD_KERNEL_CMDLINE := androidboot.configfs=true androidboot.hardware=qcom androidboot.usbcontroller=a800000.dwc3 ehci-hcd.park=3 loop.max_part=7 lpm_levels.sleep_disabled=1 msm_rtb.filter=0x37 printk.devkmsg=on sched_enable_hmp=1 sched_enable_power_aware=1 service_locator.enable=1 usbcore.autosuspend=7 user_debug=31 androidboot.selinux=permissive
 BOARD_KERNEL_BASE := 0x00000000
 BOARD_KERNEL_PAGESIZE := 4096
 BOARD_KERNEL_IMAGE_NAME := Image.gz-dtb
