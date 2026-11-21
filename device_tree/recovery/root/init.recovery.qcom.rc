@@ -1,0 +1,5 @@
+# Meizu E3 - ro.hardware=qcom，此文件由 init.rc import
+# 仅确保 configfs 模式与 UDC 控制器名，真正的 gadget 建立在 init.recovery.usb.rc
+on init
+    setprop sys.usb.configfs 1
+    setprop sys.usb.controller a800000.dwc3

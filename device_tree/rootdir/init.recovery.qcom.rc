@@ -1,9 +1,0 @@
-# Meizu E3 (sdm660, kernel 4.19): TWRP USB via configfs gadget
-on init
-    setprop sys.usb.configfs 1
-    setprop sys.usb.controller a800000.dwc3
-
-on fs && property:sys.usb.configfs=1
-    mkdir /dev/usb-ffs 0775 shell shell
-    mkdir /dev/usb-ffs/adb 0770 shell shell
-    mount functionfs adb /dev/usb-ffs/adb uid=2000,gid=2000
