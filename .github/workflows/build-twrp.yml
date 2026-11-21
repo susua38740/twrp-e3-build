@@ -1,0 +1,251 @@
+name: Build TWRP
+run-name: Build TWRP (${{ inputs.device_name || inputs.device_path }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      device_tree_url:
+        description: "设备树仓库地址(留空 = 使用本仓库根目录的 device_tree/ 文件夹)"
+        required: false
+        default: ''
+      device_tree_branch:
+        description: "设备树分支(只在填了仓库地址时有效,留空 = 默认分支)"
+        required: false
+        default: 'android-12.1'
+      device_path:
+        description: "设备树放置路径"
+        required: true
+        default: 'device_tree'
+      device_name:
+        description: "lunch 用的设备代号"
+        required: false
+        default: 'e3'
+      build_target:
+        description: "编译目标:recoveryimage / bootimage,前面可以加 adbd"
+        required: true
+        default: 'adbd recoveryimage'
+      build_variant:
+        description: "lunch 变体"
+        required: true
+        type: choice
+        default: 'eng'
+        options:
+          - eng
+          - userdebug
+      manifest_branch:
+        description: "TWRP 最小清单分支"
+        required: true
+        default: 'twrp-12.1'
+      extra_repos:
+        description: "额外依赖仓库,格式 URL|分支|路径,多个用分号分隔(可留空)"
+        required: false
+        default: ''
+      make_release:
+        description: "编译完成后发布到 Releases"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+    env:
+      TWRP_DIR: /home/runner/twrp
+      MANIFEST_URL: https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git
+      MANIFEST_BRANCH: ${{ inputs.manifest_branch }}
+      DEVICE_TREE_URL: ${{ inputs.device_tree_url }}
+      DEVICE_TREE_BRANCH: ${{ inputs.device_tree_branch }}
+      DEVICE_PATH: ${{ inputs.device_path }}
+      DEVICE_NAME_INPUT: ${{ inputs.device_name }}
+      BUILD_TARGET: ${{ inputs.build_target }}
+      BUILD_VARIANT: ${{ inputs.build_variant }}
+      EXTRA_REPOS: ${{ inputs.extra_repos }}
+
+    steps:
+      - name: Checkout (read device_tree/)
+        if: ${{ inputs.device_tree_url == '' }}
+        uses: actions/checkout@v6
+
+      - name: Free disk space and add swap
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/local/.ghcup /usr/share/swift
+          sudo docker image prune --all --force || true
+          sudo apt-get clean
+          sudo fallocate -l 8G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          df -h /
+          free -h
+
+      - name: Install build dependencies and repo
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends bc bison build-essential ccache cpio curl fontconfig flex g++-multilib gcc-multilib git git-lfs gnupg gperf lib32z1-dev libc6-dev-i386 libelf-dev libncurses5-dev libssl-dev libxml2 libxml2-utils lz4 lzop pngcrush python3 python-is-python3 rsync schedtool squashfs-tools unzip xsltproc zip zlib1g-dev
+          mkdir -p "$HOME/bin"
+          curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo -o "$HOME/bin/repo"
+          chmod a+x "$HOME/bin/repo"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+          git config --global user.name "twrp-ci"
+          git config --global user.email "twrp-ci@github.com"
+          git config --global color.ui false
+
+      - name: Sync TWRP source
+        run: |
+          mkdir -p "$TWRP_DIR"
+          cd "$TWRP_DIR"
+          repo init --depth=1 -u "$MANIFEST_URL" -b "$MANIFEST_BRANCH"
+          ok=0
+          for i in 1 2 3 4 5; do
+            if repo sync -c -j4 --force-sync --no-clone-bundle --no-tags; then
+              ok=1
+              break
+            fi
+            echo "repo sync failed (attempt $i), retrying"
+            sleep $((i * 30))
+          done
+          if [ "$ok" != 1 ]; then
+            echo "::error::repo sync failed after 5 attempts"
+            exit 1
+          fi
+          df -h /
+
+      - name: Place device tree
+        run: |
+          trim() {
+            local s="$1"
+            s="${s#"${s%%[![:space:]]*}"}"
+            s="${s%"${s##*[![:space:]]}"}"
+            printf '%s' "$s"
+          }
+
+          case "$DEVICE_PATH" in
+            /*|*..*)
+              echo "::error::device_path must be relative and not contain .."
+              exit 1
+              ;;
+          esac
+          dest="$TWRP_DIR/$DEVICE_PATH"
+          rm -rf "$dest"
+          mkdir -p "$(dirname "$dest")"
+
+          if [ -n "$DEVICE_TREE_URL" ]; then
+            args=(--depth=1)
+            if [ -n "$DEVICE_TREE_BRANCH" ]; then args+=(-b "$DEVICE_TREE_BRANCH"); fi
+            git clone "${args[@]}" "$DEVICE_TREE_URL" "$dest"
+          else
+            if [ ! -d "$GITHUB_WORKSPACE/device_tree" ]; then
+              echo "::error::device_tree_url is empty but no device_tree/ folder found"
+              exit 1
+            fi
+            mkdir -p "$dest"
+            cp -a "$GITHUB_WORKSPACE/device_tree/." "$dest/"
+          fi
+
+          if [ -n "$EXTRA_REPOS" ]; then
+            IFS=';' read -ra repos <<< "$EXTRA_REPOS"
+            for item in "${repos[@]}"; do
+              IFS='|' read -r url branch path <<< "$item"
+              url="$(trim "$url")"
+              branch="$(trim "$branch")"
+              path="$(trim "$path")"
+              if [ -z "$url" ]; then continue; fi
+              case "$path" in
+                ""|/*|*..*)
+                  echo "::error::invalid extra_repos path: '$path'"
+                  exit 1
+                  ;;
+              esac
+              args=(--depth=1)
+              if [ -n "$branch" ]; then args+=(-b "$branch"); fi
+              rm -rf "${TWRP_DIR:?}/$path"
+              git clone "${args[@]}" "$url" "$TWRP_DIR/$path"
+            done
+          fi
+
+          ls -la "$dest"
+
+      - name: Build
+        run: |
+          cd "$TWRP_DIR"
+          name="${DEVICE_NAME_INPUT:-$(basename "$DEVICE_PATH")}"
+          echo "DEVICE_NAME=$name" >> "$GITHUB_ENV"
+
+          export ALLOW_MISSING_DEPENDENCIES=true
+          export LC_ALL=C
+
+          set +e
+          source build/envsetup.sh
+
+          if ! type mka > /dev/null 2>&1; then
+            mka() { m -j"$(nproc)" "$@"; }
+          fi
+
+          if ! lunch "twrp_${name}-${BUILD_VARIANT}"; then
+            echo "::error::lunch failed - check twrp_${name}.mk, AndroidProducts.mk, and device name"
+            exit 1
+          fi
+
+          read -ra targets <<< "$BUILD_TARGET"
+          if ! mka "${targets[@]}"; then
+            echo "::error::build failed - see logs above"
+            exit 1
+          fi
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p output
+          product_root="$TWRP_DIR/out/target/product"
+          dir="$product_root/$DEVICE_NAME"
+          if [ ! -d "$dir" ]; then
+            dir="$(find "$product_root" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          fi
+          echo "Artifact dir: $dir"
+          for f in recovery.img boot.img vendor_boot.img; do
+            if [ -f "$dir/$f" ]; then cp -v "$dir/$f" output/; fi
+          done
+          if [ -z "$(ls -A output)" ]; then
+            echo "::error::no recovery.img / boot.img / vendor_boot.img found"
+            exit 1
+          fi
+          {
+            echo '### Build Artifacts'
+            echo '```'
+            (cd output && ls -l && sha256sum ./*)
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: twrp-${{ env.DEVICE_NAME }}-${{ github.run_number }}
+          path: output/*
+          if-no-files-found: error
+
+      - name: Release
+        if: ${{ inputs.make_release }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="twrp-${DEVICE_NAME}-$(date -u +%Y%m%d-%H%M)"
+          gh release create "$tag" output/* --repo "$GITHUB_REPOSITORY" --title "$tag" --notes "TWRP (${MANIFEST_BRANCH}) for ${DEVICE_NAME}, build #${GITHUB_RUN_NUMBER}"
+
+      - name: Save build logs on failure
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: build-logs-${{ github.run_number }}
+          path: |
+            ${{ env.TWRP_DIR }}/out/error.log
+            ${{ env.TWRP_DIR }}/out/verbose.log.gz
+          if-no-files-found: ignore
